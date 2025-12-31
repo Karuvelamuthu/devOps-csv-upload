@@ -40,8 +40,8 @@ Node.js Express application that:
 npm dependencies:
 - `express` - Web framework
 - `multer` - File upload handling
-- `aws` - Web framework
-- `multer` - File upload handling
+- `@aws-sdk/lib-storage` - to do multipart uploads
+- `@aws-sdk/client-s3` - for access to  s3 bucket
 
 ### backend/Dockerfile
 Multi-stage Docker build:
