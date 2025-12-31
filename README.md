@@ -11,6 +11,11 @@ devops-csv-upload/
 │   ├── package.json        # npm dependencies
 │   └── Dockerfile          # Docker build file
 ├── nginx/
+│   └── html/               # front-end files
+│       ├── index.html      # main html file
+│       ├── styles.css      # style sheet file
+│       └── script.js       # script file
+├── nginx/
 │   └── nginx.conf          # NGINX configuration
 ├── k8s/
 │   ├── deployment.yaml     # Kubernetes deployment
