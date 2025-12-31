@@ -2,12 +2,11 @@ const express = require('express');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-
 const app = express();
 const upload = multer({ dest: '/tmp/uploads/' });
 
 // For local development - store files in ./uploads directory
-const LOCAL_UPLOAD_DIR = process.env.UPLOAD_DIR || './uploads';
+const LOCAL_UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
 
 // Ensure upload directory exists
 if (!fs.existsSync(LOCAL_UPLOAD_DIR)) {
@@ -16,6 +15,147 @@ if (!fs.existsSync(LOCAL_UPLOAD_DIR)) {
 
 app.use(express.static('public'));
 app.use(express.json());
+const { S3Client } = require("@aws-sdk/client-s3");
+const { Upload } = require("@aws-sdk/lib-storage");
+
+// Initialize S3 Client
+// Note: It automatically picks up IAM Role credentials from the EC2 instance
+const s3Client = new S3Client({ region: "eu-north-1" }); 
+const BUCKET_NAME = "muthuproject";
+
+app.post('/uploads3', upload.single('csv'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'No file provided' });
+    }
+
+    if (!req.file.originalname.endsWith('.csv')) {
+      if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+      return res.status(400).json({ success: false, error: 'Only CSV files are allowed' });
+    }
+
+    const fileName = `${Date.now()}-${req.file.originalname}`;
+    /* -------------------------------
+    1. STORE FILE LOCALLY (same as /upload)
+    -------------------------------- */
+    const filePath = path.join(LOCAL_UPLOAD_DIR, fileName);
+    fs.copyFileSync(req.file.path, filePath);
+
+    const fileStream = fs.createReadStream(req.file.path);
+
+    // S3 Managed Upload
+    const parallelUploads3 = new Upload({
+      client: s3Client,
+  params: {
+        Bucket: BUCKET_NAME,
+        Key: `uploads/${fileName}`, // Organized folder structure in S3
+        Body: fileStream,
+        ContentType: 'text/csv',
+      },
+    });
+
+    await parallelUploads3.done();
+
+    // Clean up local temp file after successful S3 upload
+    fs.unlinkSync(req.file.path);
+
+    console.log(`File uploaded to S3 successfully: ${fileName}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'File uploaded to S3 successfully',
+      fileName: req.file.originalname,
+      s3Key: `uploads/${fileName}`,
+      bucket: BUCKET_NAME,
+      size: req.file.size,
+      uploadedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    // Ensure cleanup of local temp file on error
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    console.error('S3 Upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload file to S3',
+      message: error.message
+    });
+  }
+});
+
+// Upload CSV file
+app.post('/uploads', upload.single('csv'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No file provided'
+      });
+    }
+
+    // Validate CSV file
+    if (!req.file.originalname.endsWith('.csv')) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({
+        success: false,
+        error: 'Only CSV files are allowed'
+      });
+    }
+
+    // Create unique filename
+    const fileName = `${Date.now()}-${req.file.originalname}`;
+    const filePath = path.join(LOCAL_UPLOAD_DIR, fileName);
+
+    // Move file from temp to uploads directory
+    fs.copyFileSync(req.file.path, filePath);
+
+    const fileStream = fs.createReadStream(req.file.path);
+
+    // S3 Managed Upload
+    const parallelUploads3 = new Upload({
+      client: s3Client,
+  params: {
+        Bucket: BUCKET_NAME,
+        Key: `uploads/${fileName}`, // Organized folder structure in S3
+        Body: fileStream,
+        ContentType: 'text/csv',
+      },
+    });
+
+    await parallelUploads3.done();
+
+    // Clean up local temp file after successful S3 upload
+    fs.unlinkSync(req.file.path);
+
+    console.log(`File uploaded successfully: ${fileName}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'File uploaded successfully',
+      fileName: req.file.originalname,
+      s3Key: `uploads/${fileName}`,
+      bucket: BUCKET_NAME,
+     size: req.file.size,
+      path: filePath,
+      uploadedAt: new Date().toISOString()
+    });
+
+  } catch (error) {
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+
+    console.error('Upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload file',
+      message: error.message
+    });
+  }
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -244,7 +384,7 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`  GET  /health              - Health check`);
   console.log(`  GET  /live                - Liveness probe`);
   console.log(`  GET  /ready               - Readiness probe`);
-  console.log(`  POST /upload              - Upload CSV file`);
+  console.log(`  POST /uploads3              - Upload CSV file to s3 `);
   console.log(`  GET  /files               - List uploaded files`);
   console.log(`  GET  /files/:fileName     - Get file details`);
   console.log(`  GET  /download/:fileName  - Download file`);
